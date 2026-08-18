@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Queue Board — Admin</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
+  :root {
+    --board-bg: #14120f; --board-panel: #1c1914; --led: #ff7a1a; --led-glow: rgba(255,122,26,.55);
+    --stamp: #b23a2e; --stamp-dark: #8c2c22; --paper: #ede4d2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--board-bg); color: var(--paper); font-family: 'Space Mono', monospace; }
+  #app { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .board-wrap { width: 100%; max-width: 560px; }
+  .board-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .board-eyebrow { font-size: 11px; letter-spacing: .25em; text-transform: uppercase; color: var(--led); }
+  .panel { background: var(--board-panel); border: 1px solid #2c2620; border-radius: 24px; padding: 40px; text-align: center; }
+  .panel .label { font-size: 11px; letter-spacing: .3em; text-transform: uppercase; color: #8a7f6f; margin: 0 0 10px; }
+  .led { font-family: 'Bebas Neue', sans-serif; font-size: 108px; line-height: 1; color: var(--led);
+    text-shadow: 0 0 6px var(--led-glow), 0 0 22px var(--led-glow), 0 0 46px var(--led-glow); }
+  .panel .sub { margin-top: 14px; font-size: 13px; color: #8a7f6f; }
+  .board-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }
+  button { font-family: 'Bebas Neue', sans-serif; cursor: pointer; font-size: 26px; border-radius: 18px; padding: 22px; }
+  .btn-next { background: var(--stamp); color: var(--paper); border: none; }
+  .btn-next:hover:not(:disabled) { background: var(--stamp-dark); }
+  .btn-next:disabled, .btn-reset:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-reset { background: transparent; color: #8a7f6f; border: 1px solid #2c2620; }
+  .btn-reset:hover:not(:disabled) { color: var(--paper); border-color: #4a4030; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  var PW_KEY = 'queue:adminPassword';
+  var app = document.getElementById('app');
+  var state = null;
+  var busy = false;
+
+  function password() { return localStorage.getItem(PW_KEY) || ''; }
+
+  function promptForPassword() {
+    var pw = window.prompt('Admin password:');
+    if (pw !== null) localStorage.setItem(PW_KEY, pw);
+  }
+  if (!password()) promptForPassword();
+
+  function pad(n) { return String(n == null ? 0 : n).padStart(3, '0'); }
+
+  async function poll() {
+    var res = await fetch('/api/state', { cache: 'no-store' });
+    if (res.ok) state = await res.json();
+    render();
+  }
+
+  async function authedPost(url) {
+    var res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password() }),
+    });
+    if (res.status === 401) {
+      window.alert('Wrong password.');
+      localStorage.removeItem(PW_KEY);
+      promptForPassword();
+      return null;
+    }
+    return res.json();
+  }
+
+  async function callNext() {
+    busy = true; render();
+    var data = await authedPost('/api/next');
+    if (data) state = data;
+    busy = false; render();
+  }
+
+  async function resetQueue() {
+    if (!window.confirm('Reset the queue back to zero?')) return;
+    busy = true; render();
+    var data = await authedPost('/api/reset');
+    if (data) state = data;
+    busy = false; render();
+  }
+
+  function render() {
+    var waiting = state ? Math.max(state.counter - state.serving, 0) : 0;
+    var canCallNext = state && state.serving < state.counter && !busy;
+    app.innerHTML = ''
+      + '<div class="board-wrap">'
+      + '  <div class="board-top"><span class="board-eyebrow">Queue Board</span></div>'
+      + '  <div class="panel">'
+      + '    <p class="label">Now Serving</p>'
+      + '    <div class="led">' + (state ? pad(state.serving) : '—') + '</div>'
+      + '    <p class="sub">' + waiting + ' waiting · last ticket #' + (state ? pad(state.counter) : '—') + '</p>'
+      + '  </div>'
+      + '  <div class="board-actions">'
+      + '    <button id="nextBtn" class="btn-next" ' + (canCallNext ? '' : 'disabled') + '>Call Next →</button>'
+      + '    <button id="resetBtn" class="btn-reset" ' + (busy ? 'disabled' : '') + '>Reset Queue</button>'
+      + '  </div>'
+      + '</div>';
+    document.getElementById('nextBtn').addEventListener('click', callNext);
+    document.getElementById('resetBtn').addEventListener('click', resetQueue);
+  }
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Take a Number</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap');
+  :root {
+    --paper: #ede4d2; --paper-dark: #e2d6bd; --ink: #241c15; --ink-soft: #5c5142;
+    --stamp: #b23a2e; --stamp-dark: #8c2c22; --line: #c9bb9e; --success: #3e7a4c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--paper); color: var(--ink); font-family: 'Space Mono', monospace; }
+  #app { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .numeral { font-family: 'Bebas Neue', sans-serif; }
+  .wrap { width: 100%; max-width: 380px; }
+  .card { background: var(--paper-dark); border-radius: 20px; padding: 32px; text-align: center;
+    box-shadow: 0 1px 0 rgba(36,28,21,0.06), 0 12px 24px -12px rgba(36,28,21,0.35), 0 2px 6px rgba(36,28,21,0.12); }
+  .eyebrow { font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 12px; }
+  h1.title { font-size: 44px; line-height: 1; margin: 0 0 20px; }
+  p.desc { font-size: 14px; color: var(--ink-soft); margin: 0 0 28px; }
+  button { font-family: 'Space Mono', monospace; cursor: pointer; border: none; }
+  .btn-stamp { background: var(--stamp); color: var(--paper); width: 100%; border-radius: 999px; padding: 16px;
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.03em; transition: background .15s; }
+  .btn-stamp:hover:not(:disabled) { background: var(--stamp-dark); }
+  .btn-stamp:disabled { opacity: .5; cursor: not-allowed; }
+  .status-line { margin-top: 20px; font-size: 12px; color: var(--ink-soft); }
+  .status-line b { color: var(--ink); }
+  .ticket { position: relative; background: var(--paper); border-radius: 20px; overflow: hidden;
+    box-shadow: 0 1px 0 rgba(36,28,21,0.06), 0 12px 24px -12px rgba(36,28,21,0.35), 0 2px 6px rgba(36,28,21,0.12);
+    transition: transform .2s; }
+  .ticket.called { transform: scale(1.02); }
+  .ticket-head { padding: 36px 28px 22px; text-align: center; }
+  .ticket-head.called { background: var(--success); color: var(--paper); }
+  .ticket-num { font-family: 'Bebas Neue', sans-serif; font-size: 88px; line-height: 1; }
+  .ticket-num.pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .7; } }
+  .perf { position: relative; margin: 0 24px; border-top: 2px dashed var(--line); }
+  .perf::before { content: ""; position: absolute; top: -9px; left: 0; right: 0; height: 16px;
+    background-image: radial-gradient(circle at 12px 8px, var(--paper) 8px, transparent 8.5px);
+    background-size: 24px 16px; background-repeat: repeat-x; }
+  .ticket-body { padding: 24px 28px; text-align: center; }
+  .ticket-body .now-serving { font-size: 13px; color: var(--ink-soft); margin: 0 0 4px; }
+  .ticket-body .now-serving b { color: var(--ink); }
+  .ticket-body .ahead { font-family: 'Bebas Neue', sans-serif; font-size: 30px; margin: 0; }
+  .ticket-body .called-msg { font-size: 14px; font-weight: 700; color: var(--success); margin: 0; }
+  .ticket-body .already { font-size: 11px; color: var(--ink-soft); margin: 8px 0 0; }
+  .ticket-footer { width: 100%; padding: 14px; background: transparent; border-top: 1px solid var(--line);
+    font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--ink-soft); }
+  .ticket-footer:hover { background: var(--paper-dark); }
+  .err { margin-top: 14px; text-align: center; font-size: 12px; color: var(--stamp); }
+  .admin-link { display: block; text-align: center; margin-top: 22px; font-size: 11px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--ink-soft); text-decoration: none; }
+</style>
+</head>
+<body>
+<div id="app"><div class="wrap"><p style="text-align:center;color:var(--ink-soft);font-size:13px;">Loading queue…</p></div></div>
+
+<script>
+(function () {
+  var STORAGE_KEY = 'queue:myTicket';
+  var app = document.getElementById('app');
+
+  var myTicket = localStorage.getItem(STORAGE_KEY) ? Number(localStorage.getItem(STORAGE_KEY)) : null;
+  var state = null;
+  var taking = false;
+  var error = null;
+  var notifiedThisTurn = false;
+  var titleFlashTimer = null;
+  var originalTitle = document.title;
+
+  function pad(n) { return String(n == null ? 0 : n).padStart(3, '0'); }
+
+  async function poll() {
+    try {
+      var res = await fetch('/api/state', { cache: 'no-store' });
+      if (!res.ok) throw new Error();
+      state = await res.json();
+      error = null;
+    } catch (e) {
+      error = 'Having trouble reaching the queue. Retrying…';
+    }
+    render();
+  }
+
+  async function takeNumber() {
+    taking = true;
+    render();
+    try {
+      var res = await fetch('/api/take', { method: 'POST' });
+      if (!res.ok) throw new Error();
+      var data = await res.json();
+      myTicket = data.number;
+      localStorage.setItem(STORAGE_KEY, String(myTicket));
+      state = { counter: data.counter, serving: data.serving };
+      notifiedThisTurn = false;
+      error = null;
+    } catch (e) {
+      error = "Couldn't take a ticket. Try again.";
+    } finally {
+      taking = false;
+      render();
+    }
+  }
+
+  function startOver() {
+    localStorage.removeItem(STORAGE_KEY);
+    myTicket = null;
+    notifiedThisTurn = false;
+    render();
+  }
+
+  function updateTitleFlash(justCalled) {
+    if (titleFlashTimer) { clearInterval(titleFlashTimer); titleFlashTimer = null; }
+    if (!justCalled) { document.title = originalTitle; return; }
+    var on = false;
+    titleFlashTimer = setInterval(function () {
+      document.title = on ? originalTitle : "🔔 You're up!";
+      on = !on;
+    }, 900);
+  }
+
+  function render() {
+    var html = '<div class="wrap">';
+
+    if (myTicket === null) {
+      var waiting = state ? Math.max(state.counter - state.serving, 0) : null;
+      html += ''
+        + '<div class="card">'
+        + '  <p class="eyebrow">Please wait to be served</p>'
+        + '  <h1 class="title numeral">Take a Number</h1>'
+        + '  <p class="desc">Tap below to get your ticket. Keep this page open — it updates on its own.</p>'
+        + '  <button id="takeBtn" class="btn-stamp" ' + (taking ? 'disabled' : '') + '>' + (taking ? 'Printing…' : 'Get My Number') + '</button>'
+        + (state ? '<p class="status-line">Now serving <b>#' + pad(state.serving) + '</b> · ' + waiting + ' in line</p>' : '')
+        + '</div>'
+        + '<a class="admin-link" href="/admin.html">Admin</a>';
+    } else {
+      var aheadOfYou = state ? Math.max(myTicket - state.serving - 1, 0) : null;
+      var isYourTurn = state ? myTicket <= state.serving : false;
+      var justCalled = state ? myTicket === state.serving : false;
+
+      if (justCalled && !notifiedThisTurn) {
+        notifiedThisTurn = true;
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      }
+      if (!justCalled) notifiedThisTurn = false;
+      updateTitleFlash(justCalled);
+
+      html += '<div class="ticket ' + (justCalled ? 'called' : '') + '">'
+        + '  <div class="ticket-head ' + (justCalled ? 'called' : '') + '">'
+        + '    <p class="eyebrow" style="opacity:.7">' + (justCalled ? "It's your turn" : 'Your ticket') + '</p>'
+        + '    <div class="ticket-num ' + (justCalled ? 'pulse' : '') + '">' + pad(myTicket) + '</div>'
+        + '  </div>'
+        + '  <div class="perf"></div>'
+        + '  <div class="ticket-body">';
+
+      if (justCalled) {
+        html += '<p class="called-msg">Please head to the counter now.</p>';
+      } else {
+        html += ''
+          + '<p class="now-serving">Now serving <b>#' + (state ? pad(state.serving) : '…') + '</b></p>'
+          + '<p class="ahead">' + (aheadOfYou === null ? '…' : aheadOfYou === 0 ? "You're next!" : aheadOfYou + ' ahead of you') + '</p>';
+      }
+      if (isYourTurn && !justCalled) html += '<p class="already">Your number has already been called.</p>';
+      html += '</div>';
+      if (isYourTurn) html += '<button id="startOverBtn" class="ticket-footer">Done — take another number</button>';
+      html += '</div>';
+    }
+
+    if (error) html += '<p class="err">' + error + '</p>';
+    html += '</div>';
+    app.innerHTML = html;
+
+    var takeBtn = document.getElementById('takeBtn');
+    if (takeBtn) takeBtn.addEventListener('click', takeNumber);
+    var startOverBtn = document.getElementById('startOverBtn');
+    if (startOverBtn) startOverBtn.addEventListener('click', startOver);
+  }
+
+  poll();
+  setInterval(poll, 2500);
+})();
+</script>
+</body>
+</html>
